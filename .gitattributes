@@ -1,0 +1,7 @@
+small_db_using_HF_baai_bge/** filter=lfs diff=lfs merge=lfs -text
+large_embeddings_baai_bge/** filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
+*.pkl filter=lfs diff=lfs merge=lfs -text
+*.npy filter=lfs diff=lfs merge=lfs -text
+*.cbor filter=lfs diff=lfs merge=lfs -text
+*.sqlite3 filter=lfs diff=lfs merge=lfs -text
