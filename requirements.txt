@@ -3,6 +3,7 @@ langchain-core
 langchain-community
 langchain-huggingface
 google-generativeai
+langchain-google-community
 
 langgraph
 chromadb
