@@ -19,6 +19,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_community.utilities import WikipediaAPIWrapper, GoogleSearchAPIWrapper
 from langchain_community.tools import WikipediaQueryRun, GoogleSearchRun
 
+from google.generativeai import configure, GenerativeModel
 
 # =====================================================
 # 🌟 STREAMLIT SETUP
@@ -50,11 +51,14 @@ if not GOOGLE_API_KEY:
 # =====================================================
 # 🤖 GEMINI LLM
 # =====================================================
-gemini = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    temperature=0,
-    api_key=GOOGLE_API_KEY
-)
+# gemini = ChatGoogleGenerativeAI(
+#     model="gemini-2.5-flash",
+#     temperature=0,
+#     api_key=GOOGLE_API_KEY
+# )
+
+configure(api_key=GOOGLE_API_KEY)
+gemini = GenerativeModel("gemini-2.5-flash")
 
 
 # =====================================================
