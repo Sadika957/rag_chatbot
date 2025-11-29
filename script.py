@@ -13,7 +13,9 @@ from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, START, END
 # from langchain_google_genai import ChatGoogleGenerativeAI
 
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+
 from langchain_community.vectorstores import Chroma
 
 from langchain_community.utilities import WikipediaAPIWrapper, GoogleSearchAPIWrapper
