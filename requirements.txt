@@ -1,6 +1,7 @@
 langchain
 langchain-core
 langchain-community
+langchain-huggingface
 google-generativeai
 
 langgraph
