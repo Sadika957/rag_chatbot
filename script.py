@@ -33,14 +33,11 @@ st.write("HuggingFace Embeddings + Gemini + Multi-source Retrieval")
 # =====================================================
 # 🔑 API KEYS (Streamlit Secrets)
 # =====================================================
-# GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
 
 
-# GOOGLE_CSE_ID = st.secrets["GOOGLE_CSE_ID"]
+GOOGLE_CSE_ID = st.secrets["GOOGLE_CSE_ID"]
 
-
-GOOGLE_API_KEY="AIzaSyBMSTBqYv74VqltxMj7G8eUtbuQg8tUROg"
-GOOGLE_CSE_ID="94a6404e7eb494900"
 
 
 if not GOOGLE_API_KEY:
