@@ -13,8 +13,9 @@ from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, START, END
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_community.utilities import WikipediaAPIWrapper, GoogleSearchAPIWrapper
-from langchain_community.tools import WikipediaQueryRun, GoogleSearchRun
+from langchain_community.utilities import WikipediaAPIWrapper #, GoogleSearchAPIWrapper
+from langchain_community.tools import WikipediaQueryRun #, GoogleSearchRun
+from langchain_community.utilities import SerpAPIWrapper
 
 
 # Google Gemini SDK
@@ -121,12 +122,15 @@ class GraphState(TypedDict):
 # =====================================================
 wiki_tool = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
 
-google_tool = GoogleSearchRun(
-    api_wrapper=GoogleSearchAPIWrapper(
-        google_api_key=GOOGLE_API_KEY,
-        google_cse_id=GOOGLE_CSE_ID
-    )
-)
+# google_tool = GoogleSearchRun(
+#     api_wrapper=GoogleSearchAPIWrapper(
+#         google_api_key=GOOGLE_API_KEY,
+#         google_cse_id=GOOGLE_CSE_ID
+#     )
+# )
+
+
+google_tool = SerpAPIWrapper(api_key=os.getenv("SERPAPI_KEY"))
 
 
 # ============================================================
@@ -179,28 +183,57 @@ def db2_node(state: GraphState):
 #     except:
 #         return {**state, "context": "no_google"}
 
+# def google_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     try:
+#         snippet = google_tool.run(q)
+
+#         # Some APIs return [] or {} = treat as no results
+#         if not snippet or len(str(snippet).strip()) < 10:
+#             return {**state, "context": "no_google"}
+
+#         # Proper Gemini answer
+#         resp = gemini.generate_content(
+#             f"Answer using these Google search results:\n{snippet}"
+#         )
+#         ans = resp.text.strip()
+
+#         return {
+#             **state,
+#             "answer": ans,
+#             "context": "google",
+#             "citations": [
+#                 f"https://www.google.com/search?q={quote(q)}"
+#             ]
+#         }
+
+#     except Exception as e:
+#         print("Google error:", e)
+#         return {**state, "context": "no_google"}
+
+
+
+
+# Google Node using SERP API
 def google_node(state: GraphState):
     q = clean_query(state["query"])
-    try:
-        snippet = google_tool.run(q)
 
-        # Some APIs return [] or {} = treat as no results
-        if not snippet or len(str(snippet).strip()) < 10:
+    try:
+        results = google_tool.run(q)
+
+        if not results:
             return {**state, "context": "no_google"}
 
-        # Proper Gemini answer
-        resp = gemini.generate_content(
-            f"Answer using these Google search results:\n{snippet}"
-        )
-        ans = resp.text.strip()
+        prompt = f"Answer concisely using these Google search results:\n{results}"
+        ans = gemini.generate_content(prompt).text.strip()
+
+        refs = [f"https://www.google.com/search?q={quote(q)}"]
 
         return {
             **state,
             "answer": ans,
             "context": "google",
-            "citations": [
-                f"https://www.google.com/search?q={quote(q)}"
-            ]
+            "citations": refs
         }
 
     except Exception as e:
