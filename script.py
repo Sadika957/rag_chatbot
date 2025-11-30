@@ -130,7 +130,16 @@ wiki_tool = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
 # )
 
 
-google_tool = SerpAPIWrapper(api_key=os.getenv("SERPAPI_KEY"))
+# google_tool = SerpAPIWrapper(api_key=os.getenv("SERPAPI_KEY"))
+
+
+# google_tool = SerpAPIWrapper(serpapi_api_key=os.getenv("SERPAPI_API_KEY"))
+
+google_tool = SerpAPIWrapper(
+    serpapi_api_key=os.getenv("SERPAPI_API_KEY")
+)
+
+
 
 
 # ============================================================
