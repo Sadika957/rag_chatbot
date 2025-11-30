@@ -13,6 +13,9 @@ from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, START, END
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
+from langchain_community.utilities import WikipediaAPIWrapper, GoogleSearchAPIWrapper
+from langchain_community.tools import WikipediaQueryRun, GoogleSearchRun
+
 
 # Google Gemini SDK
 import google.generativeai as genai
