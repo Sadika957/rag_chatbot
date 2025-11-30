@@ -178,9 +178,44 @@ class GraphState(TypedDict):
     citations: List[str]
 
 
+# # =====================================================
+# # 🧱 Nodes (DB1 → DB2 → Google → Wiki → GBIF → iNat)
+# # =====================================================
+# def db1_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     docs = retriever1.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db1"}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db1"}
+
+#     refs = [f"https://www.google.com/search?q={quote(q)}"]
+#     return {**state, "answer": ans, "context": "db1", "citations": refs}
+
+
+# def db2_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     docs = retriever2.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db2"}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db2"}
+
+#     refs = scholarly_lookup(q)
+#     return {**state, "answer": ans, "context": "db2", "citations": refs}
+
+
+
 # =====================================================
-# 🧱 Nodes (DB1 → DB2 → Google → Wiki → GBIF → iNat)
+# 🧱 Nodes (DB1 → DB2 → Gemini → Final)
 # =====================================================
+
 def db1_node(state: GraphState):
     q = clean_query(state["query"])
     docs = retriever1.invoke(q)
@@ -192,7 +227,8 @@ def db1_node(state: GraphState):
     if not ans:
         return {**state, "context": "no_db1"}
 
-    refs = [f"https://www.google.com/search?q={quote(q)}"]
+    # DB1 citations
+    refs = [f"LocalDB1: {len(docs)} matches"]
     return {**state, "answer": ans, "context": "db1", "citations": refs}
 
 
@@ -207,8 +243,55 @@ def db2_node(state: GraphState):
     if not ans:
         return {**state, "context": "no_db2"}
 
-    refs = scholarly_lookup(q)
+    # DB2 citations
+    refs = [f"LocalDB2: {len(docs)} matches"]
     return {**state, "answer": ans, "context": "db2", "citations": refs}
+
+
+# GEMINI FALLBACK
+def gemini_node(state: GraphState):
+    q = clean_query(state["query"])
+
+    try:
+        prompt = f"""
+You are a helpful assistant. The local database could not answer the question.
+Give a clear factual answer.
+
+Question: {q}
+"""
+        response = gemini.generate_content(prompt)
+        ans = response.text or ""
+    except Exception:
+        return {**state, "context": "no_gemini"}
+
+    refs = ["Gemini Fallback"]
+    return {**state, "answer": ans, "context": "gemini", "citations": refs}
+
+
+# FINAL NODE
+def final_node(state: GraphState):
+    q = clean_query(state["query"])
+    base = state["answer"]
+    cites = state.get("citations", [])
+
+    try:
+        prompt = f"""
+Summarize the following into a clean, high-quality answer.
+Preserve citations.
+
+Question: {q}
+Answer: {base}
+"""
+        response = gemini.generate_content(prompt)
+        summary = response.text or base
+    except Exception:
+        summary = base
+
+    if cites:
+        summary += "\n\n### 📚 Citations\n" + "\n".join(f"- {c}" for c in cites)
+
+    return {**state, "answer": summary}
+
 
 
 def google_node(state: GraphState):
@@ -310,43 +393,78 @@ Answer: {base}
     return {**state, "answer": summary}
 
 
+# # =====================================================
+# # 🔀 Build Workflow
+# # =====================================================
+# workflow = StateGraph(GraphState)
+
+# workflow.add_node("db1", db1_node)
+# workflow.add_node("db2", db2_node)
+# workflow.add_node("google", google_node)
+# workflow.add_node("wiki", wiki_node)
+# workflow.add_node("gbif", gbif_node)
+# workflow.add_node("inat", inat_node)
+# workflow.add_node("final", final_node)
+
+# workflow.add_edge(START, "db1")
+# workflow.add_conditional_edges("db1", lambda s: s["context"], {
+#     "db1": "final",
+#     "no_db1": "db2",
+# })
+# workflow.add_conditional_edges("db2", lambda s: s["context"], {
+#     "db2": "final",
+#     "no_db2": "google",
+# })
+# workflow.add_conditional_edges("google", lambda s: s["context"], {
+#     "google": "final",
+#     "no_google": "wiki",
+# })
+# workflow.add_conditional_edges("wiki", lambda s: s["context"], {
+#     "wiki": "final",
+#     "no_wiki": "gbif",
+# })
+# workflow.add_conditional_edges("gbif", lambda s: s["context"], {
+#     "gbif": "final",
+#     "no_gbif": "inat",
+# })
+# workflow.add_edge("inat", "final")
+
+# graph = workflow.compile()
+
+
+
+
+
 # =====================================================
-# 🔀 Build Workflow
+# 🔀 Build Workflow (DB1 → DB2 → Gemini → Final)
 # =====================================================
+
 workflow = StateGraph(GraphState)
 
 workflow.add_node("db1", db1_node)
 workflow.add_node("db2", db2_node)
-workflow.add_node("google", google_node)
-workflow.add_node("wiki", wiki_node)
-workflow.add_node("gbif", gbif_node)
-workflow.add_node("inat", inat_node)
+workflow.add_node("gemini", gemini_node)
 workflow.add_node("final", final_node)
 
 workflow.add_edge(START, "db1")
+
+# DB1
 workflow.add_conditional_edges("db1", lambda s: s["context"], {
     "db1": "final",
     "no_db1": "db2",
 })
+
+# DB2
 workflow.add_conditional_edges("db2", lambda s: s["context"], {
     "db2": "final",
-    "no_db2": "google",
+    "no_db2": "gemini",
 })
-workflow.add_conditional_edges("google", lambda s: s["context"], {
-    "google": "final",
-    "no_google": "wiki",
-})
-workflow.add_conditional_edges("wiki", lambda s: s["context"], {
-    "wiki": "final",
-    "no_wiki": "gbif",
-})
-workflow.add_conditional_edges("gbif", lambda s: s["context"], {
-    "gbif": "final",
-    "no_gbif": "inat",
-})
-workflow.add_edge("inat", "final")
+
+# Gemini fallback always goes to final
+workflow.add_edge("gemini", "final")
 
 graph = workflow.compile()
+
 
 
 # =====================================================
