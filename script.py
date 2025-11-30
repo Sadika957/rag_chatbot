@@ -220,6 +220,67 @@ def is_vague_for_scholarly(q: str) -> bool:
     return False
 
 
+from sentence_transformers import SentenceTransformer, util
+
+semantic_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+def semantic_citations_from_answer(answer: str, limit=3):
+    """
+    Generate research citations that match the semantic meaning
+    of the chatbot's full answer, not the original query.
+    """
+
+    # Step 1 — Generate 4 semantic reformulations of the answer
+    prompt = f"""
+Rewrite the following text into:
+1. A concise scientific abstract
+2. A technical research framing
+3. A list of 5 keywords
+4. A practical problem statement
+
+Return them separated by '---'.
+
+TEXT:
+{answer}
+"""
+    try:
+        out = gemini_answer(prompt)
+        parts = out.split("---")
+        queries = [p.strip() for p in parts if len(p.strip()) > 3]
+    except:
+        queries = [answer]
+
+    # Step 2 — Run scholarly lookup for each reformulation
+    raw_citations = []
+    for q in queries:
+        raw_citations.extend(scholarly_lookup(q))
+
+    # Remove duplicates
+    raw_citations = list(dict.fromkeys(raw_citations))
+
+    if not raw_citations:
+        return []
+
+    # Step 3 — Embed the answer
+    ans_emb = semantic_model.encode(answer, convert_to_tensor=True)
+
+    # Step 4 — Rank citations by semantic similarity
+    scored = []
+    for cit in raw_citations:
+        match = re.search(r"\*([^*]+)\*", cit)   # extract title
+        title = match.group(1) if match else cit
+        emb = semantic_model.encode(title, convert_to_tensor=True)
+        score = util.cos_sim(ans_emb, emb).item()
+        scored.append((score, cit))
+
+    # Step 5 — Return best N citations
+    scored.sort(reverse=True, key=lambda x: x[0])
+    top = [c for _, c in scored[:limit]]
+
+    return top
+
+
+
 def looks_like_dont_know(text: str) -> bool:
     text = text.lower()
     patterns = [
@@ -299,8 +360,27 @@ def db1_node(state: GraphState) -> GraphState:
     return {**state, "answer": ans, "context": "db1", "citations": refs}
 
 
-def db2_node(state: GraphState) -> GraphState:
-    """Second local DB (large embeddings) → academic citations when query is specific."""
+# def db2_node(state: GraphState) -> GraphState:
+#     """Second local DB (large embeddings) → academic citations when query is specific."""
+#     q = clean_query(state["query"])
+#     docs = retriever2.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db2", "citations": []}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db2", "citations": []}
+
+#     # If query is vague/short, avoid random scholarly matches → use Google link instead
+#     if is_vague_for_scholarly(q):
+#         refs = [f"[Google Search](https://www.google.com/search?q={quote(q)})"]
+#     else:
+#         refs = scholarly_lookup(q)
+
+#     return {**state, "answer": ans, "context": "db2", "citations": refs}
+
+def db2_node(state: GraphState):
     q = clean_query(state["query"])
     docs = retriever2.invoke(q)
 
@@ -311,13 +391,17 @@ def db2_node(state: GraphState) -> GraphState:
     if not ans:
         return {**state, "context": "no_db2", "citations": []}
 
-    # If query is vague/short, avoid random scholarly matches → use Google link instead
-    if is_vague_for_scholarly(q):
-        refs = [f"[Google Search](https://www.google.com/search?q={quote(q)})"]
-    else:
-        refs = scholarly_lookup(q)
+    # 🔥 NEW: SEMANTIC CITATIONS BASED ON THE FULL ANSWER
+    refs = semantic_citations_from_answer(ans)
 
-    return {**state, "answer": ans, "context": "db2", "citations": refs}
+    return {
+        **state,
+        "answer": ans,
+        "context": "db2",
+        "citations": refs
+    }
+
+
 
 
 def google_node(state: GraphState) -> GraphState:
