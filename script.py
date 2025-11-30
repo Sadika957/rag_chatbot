@@ -1,111 +1,126 @@
+# ============================================================
+# 🌟 STREAMLIT RAG CHATBOT — DB1 + DB2 + GEMINI FLASH
+# ============================================================
+
 import streamlit as st
 import os
+import json
 import re
-from typing import TypedDict, List, Any
+import requests
+from urllib.parse import quote
+from typing import TypedDict, List, Dict, Any
+
 from langgraph.graph import StateGraph, START, END
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
 
-# from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
-from google.generativeai import configure, GenerativeModel
+# Google Gemini SDK
+import google.generativeai as genai
 
 
-# =============================================
-# 🔑 Environment Variables
-# =============================================
-GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+# ============================================================
+# 🔐 ENVIRONMENT VARIABLES
+# ============================================================
+
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
-    st.error("❌ Missing GOOGLE_API_KEY environment variable")
+    st.error("Missing GOOGLE_API_KEY environment variable!")
     st.stop()
 
+genai.configure(api_key=GOOGLE_API_KEY)
 
-# # =============================================
-# # 🤖 Gemini LLM
-# # =============================================
-# gemini = ChatGoogleGenerativeAI(
-#     model="gemini-2.5-flash",
-#     api_key=GOOGLE_API_KEY,
-#     temperature=0
-# )
+gemini = genai.GenerativeModel("gemini-2.5-flash")
 
 
-# =====================================================
-# 🤖 GEMINI LLM
-# =====================================================
-configure(api_key=GOOGLE_API_KEY)
-gemini = GenerativeModel("gemini-2.5-flash")
+# ============================================================
+# 📁 DIRECTORIES
+# ============================================================
 
-
-# =============================================
-# 🧠 Embedding Model (CPU-friendly)
-# =============================================
-MODEL_NAME = "BAAI/bge-small-en-v1.5"
-
-embeddings = HuggingFaceEmbeddings(
-    model_name=MODEL_NAME,
-    model_kwargs={"device": "cpu"}  # DigitalOcean safe
-)
-
-
-# =============================================
-# 📚 Vector DBs
-# =============================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB1_PATH = os.path.join(BASE_DIR, "small_db_using_HF_baai_bge")
 DB2_PATH = os.path.join(BASE_DIR, "large_embeddings_baai_bge")
 
+
+# ============================================================
+# 🧠 EMBEDDINGS (HF BGE-SMALL)
+# ============================================================
+
+EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+
+
+# ============================================================
+# 📚 LOAD VECTOR DBs
+# ============================================================
+
 db1 = Chroma(persist_directory=DB1_PATH, embedding_function=embeddings)
+retriever1 = db1.as_retriever(search_kwargs={"k": 6})
+
 db2 = Chroma(persist_directory=DB2_PATH, embedding_function=embeddings)
-
-retriever1 = db1.as_retriever(search_kwargs={"k": 8})
-retriever2 = db2.as_retriever(search_kwargs={"k": 8})
+retriever2 = db2.as_retriever(search_kwargs={"k": 6})
 
 
-# =============================================
-# 🔧 Utility Functions
-# =============================================
-def clean_query(q: str):
-    return re.sub(r"\s+", " ", q).strip()
+# ============================================================
+# 🧹 UTILITY FUNCTIONS
+# ============================================================
+
+def clean_query(q: str) -> str:
+    return re.sub(r"\s+", " ", q.strip())
+
+
+def gemini_answer(prompt: str) -> str:
+    """Generate text from Gemini with correct API."""
+    try:
+        resp = gemini.generate_content(prompt)
+        return resp.text.strip() if resp.text else ""
+    except Exception as e:
+        return f"(Gemini error: {e})"
 
 
 def extractive_answer(query: str, docs: List[Any]) -> str:
-    """Use Gemini to answer strictly from DB context."""
-    context = "\n\n".join(d.page_content for d in docs[:6])
+    """Extractive QA: answer ONLY from context."""
+    context_text = "\n\n".join(
+        f"[{i+1}] {d.page_content}" for i, d in enumerate(docs[:5])
+    )
 
     prompt = f"""
-Use ONLY the following context to answer.
-If answer not found, reply "NOINFO".
+Answer the question ONLY using the provided CONTEXT.
+Cite sources using [1], [2], etc.
+If answer not found, return "NOINFO".
 
-QUESTION:
-{query}
+Question: {query}
 
 CONTEXT:
-{context}
+{context_text}
 """
 
-    out = gemini.invoke(prompt).content.strip()
+    ans = gemini_answer(prompt)
 
-    if out.upper().startswith("NOINFO") or len(out) < 10:
+    if ans.upper().startswith("NOINFO") or len(ans) < 20:
         return ""
-    return out
+
+    return ans
 
 
-# =============================================
-# 🧩 Graph State
-# =============================================
+# ============================================================
+# 📚 GRAPH STATE
+# ============================================================
+
 class GraphState(TypedDict):
     query: str
     answer: str
     context: str
 
 
-# =============================================
-# 🔰 Node Functions
-# =============================================
+# ============================================================
+# 🧱 GRAPH NODES
+# ============================================================
+
 def db1_node(state: GraphState):
     q = clean_query(state["query"])
     docs = retriever1.invoke(q)
-    
+
     if not docs:
         return {**state, "context": "no_db1"}
 
@@ -130,23 +145,67 @@ def db2_node(state: GraphState):
     return {**state, "answer": ans, "context": "db2"}
 
 
-def final_node(state: GraphState):
-    """Final Gemini summary."""
+def google_node(state: GraphState):
     q = clean_query(state["query"])
-    base = state["answer"]
+    try:
+        snippet = requests.get(
+            f"https://www.googleapis.com/customsearch/v1?q={quote(q)}&key={GOOGLE_API_KEY}",
+            timeout=8,
+        ).json()
 
-    summary = gemini.invoke(f"Summarize clearly:\n\n{base}").content.strip()
-    
+        text = snippet.get("items", [{}])[0].get("snippet", "")
+        if not text:
+            return {**state, "context": "no_google"}
+
+        ans = gemini_answer(f"Answer concisely using Google results:\n{text}")
+        return {**state, "answer": ans, "context": "google"}
+
+    except:
+        return {**state, "context": "no_google"}
+
+
+def wiki_node(state: GraphState):
+    q = clean_query(state["query"])
+    try:
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(q)}"
+        blob = requests.get(url, timeout=8).json().get("extract", "")
+
+        if not blob:
+            return {**state, "context": "no_wiki"}
+
+        ans = gemini_answer(f"Answer using this Wikipedia extract:\n{blob}")
+        return {**state, "answer": ans, "context": "wiki"}
+
+    except:
+        return {**state, "context": "no_wiki"}
+
+
+def final_node(state: GraphState):
+    """Final cleanup summary."""
+    q = clean_query(state["query"])
+    base_ans = state["answer"]
+
+    prompt = f"""
+Rewrite the following answer more clearly and concisely.
+
+Question: {q}
+Answer: {base_ans}
+"""
+
+    summary = gemini_answer(prompt)
     return {**state, "answer": summary}
 
 
-# =============================================
-# 🔗 Graph Workflow
-# =============================================
+# ============================================================
+# 🔀 GRAPH PIPELINE
+# ============================================================
+
 workflow = StateGraph(GraphState)
 
 workflow.add_node("db1", db1_node)
 workflow.add_node("db2", db2_node)
+workflow.add_node("google", google_node)
+workflow.add_node("wiki", wiki_node)
 workflow.add_node("final", final_node)
 
 workflow.add_edge(START, "db1")
@@ -155,42 +214,267 @@ workflow.add_conditional_edges("db1", lambda s: s["context"], {
     "db1": "final",
     "no_db1": "db2"
 })
-
 workflow.add_conditional_edges("db2", lambda s: s["context"], {
     "db2": "final",
-    "no_db2": "final"
+    "no_db2": "google"
+})
+workflow.add_conditional_edges("google", lambda s: s["context"], {
+    "google": "final",
+    "no_google": "wiki"
 })
 
+workflow.add_edge("wiki", "final")
 workflow.add_edge("final", END)
 
 graph = workflow.compile()
 
 
-# =============================================
-# 🎨 Streamlit UI
-# =============================================
+# ============================================================
+# 🎨 STREAMLIT UI
+# ============================================================
+
 st.set_page_config(page_title="Hybrid RAG Chatbot", layout="wide")
-st.title("🤖 Hybrid RAG Chatbot — v1")
-st.write("DB1 → DB2 → Gemini")
+st.title("🤖 Hybrid RAG Chatbot — DB1 + DB2 + Google + Wiki")
 
-query = st.text_input("Ask your question:")
 
-if st.button("Search"):
-    if not query.strip():
-        st.warning("Please enter a question.")
-        st.stop()
+# Initialize conversation
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []
 
-    with st.spinner("Thinking..."):
-        result = graph.invoke({
-            "query": query,
-            "context": "",
-            "answer": ""
-        })
 
-    st.subheader("Response")
-    st.write(result["answer"])
+# Display conversation
+for msg in st.session_state["messages"]:
+    with st.chat_message(msg["role"]):
+        st.write(msg["content"])
 
-    st.caption(f"Source: **{result['context']}**")
+
+# User input box
+user_query = st.chat_input("Ask something...")
+
+if user_query:
+    st.session_state["messages"].append({"role": "user", "content": user_query})
+
+    with st.chat_message("user"):
+        st.write(user_query)
+
+    # Run RAG pipeline
+    result = graph.invoke({
+        "query": user_query,
+        "context": "",
+        "answer": ""
+    })
+
+    answer = result["answer"]
+    context = result["context"]
+
+    with st.chat_message("assistant"):
+        st.write(answer)
+        st.caption(f"Source: {context}")
+
+    st.session_state["messages"].append({"role": "assistant", "content": answer})
+
+
+
+
+
+
+
+
+
+
+# import streamlit as st
+# import os
+# import re
+# from typing import TypedDict, List, Any
+# from langgraph.graph import StateGraph, START, END
+
+# # from langchain_google_genai import ChatGoogleGenerativeAI
+# from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain_chroma import Chroma
+# from google.generativeai import configure, GenerativeModel
+
+
+# # =============================================
+# # 🔑 Environment Variables
+# # =============================================
+# GOOGLE_API_KEY = st.secrets["GOOGLE_API_KEY"]
+
+# if not GOOGLE_API_KEY:
+#     st.error("❌ Missing GOOGLE_API_KEY environment variable")
+#     st.stop()
+
+
+# # # =============================================
+# # # 🤖 Gemini LLM
+# # # =============================================
+# # gemini = ChatGoogleGenerativeAI(
+# #     model="gemini-2.5-flash",
+# #     api_key=GOOGLE_API_KEY,
+# #     temperature=0
+# # )
+
+
+# # =====================================================
+# # 🤖 GEMINI LLM
+# # =====================================================
+# configure(api_key=GOOGLE_API_KEY)
+# gemini = GenerativeModel("gemini-2.5-flash")
+
+
+# # =============================================
+# # 🧠 Embedding Model (CPU-friendly)
+# # =============================================
+# MODEL_NAME = "BAAI/bge-small-en-v1.5"
+
+# embeddings = HuggingFaceEmbeddings(
+#     model_name=MODEL_NAME,
+#     model_kwargs={"device": "cpu"}  # DigitalOcean safe
+# )
+
+
+# # =============================================
+# # 📚 Vector DBs
+# # =============================================
+# DB1_PATH = os.path.join(BASE_DIR, "small_db_using_HF_baai_bge")
+# DB2_PATH = os.path.join(BASE_DIR, "large_embeddings_baai_bge")
+
+# db1 = Chroma(persist_directory=DB1_PATH, embedding_function=embeddings)
+# db2 = Chroma(persist_directory=DB2_PATH, embedding_function=embeddings)
+
+# retriever1 = db1.as_retriever(search_kwargs={"k": 8})
+# retriever2 = db2.as_retriever(search_kwargs={"k": 8})
+
+
+# # =============================================
+# # 🔧 Utility Functions
+# # =============================================
+# def clean_query(q: str):
+#     return re.sub(r"\s+", " ", q).strip()
+
+
+# def extractive_answer(query: str, docs: List[Any]) -> str:
+#     """Use Gemini to answer strictly from DB context."""
+#     context = "\n\n".join(d.page_content for d in docs[:6])
+
+#     prompt = f"""
+# Use ONLY the following context to answer.
+# If answer not found, reply "NOINFO".
+
+# QUESTION:
+# {query}
+
+# CONTEXT:
+# {context}
+# """
+
+#     out = gemini.invoke(prompt).content.strip()
+
+#     if out.upper().startswith("NOINFO") or len(out) < 10:
+#         return ""
+#     return out
+
+
+# # =============================================
+# # 🧩 Graph State
+# # =============================================
+# class GraphState(TypedDict):
+#     query: str
+#     answer: str
+#     context: str
+
+
+# # =============================================
+# # 🔰 Node Functions
+# # =============================================
+# def db1_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     docs = retriever1.invoke(q)
+    
+#     if not docs:
+#         return {**state, "context": "no_db1"}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db1"}
+
+#     return {**state, "answer": ans, "context": "db1"}
+
+
+# def db2_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     docs = retriever2.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db2"}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db2"}
+
+#     return {**state, "answer": ans, "context": "db2"}
+
+
+# def final_node(state: GraphState):
+#     """Final Gemini summary."""
+#     q = clean_query(state["query"])
+#     base = state["answer"]
+
+#     summary = gemini.invoke(f"Summarize clearly:\n\n{base}").content.strip()
+    
+#     return {**state, "answer": summary}
+
+
+# # =============================================
+# # 🔗 Graph Workflow
+# # =============================================
+# workflow = StateGraph(GraphState)
+
+# workflow.add_node("db1", db1_node)
+# workflow.add_node("db2", db2_node)
+# workflow.add_node("final", final_node)
+
+# workflow.add_edge(START, "db1")
+
+# workflow.add_conditional_edges("db1", lambda s: s["context"], {
+#     "db1": "final",
+#     "no_db1": "db2"
+# })
+
+# workflow.add_conditional_edges("db2", lambda s: s["context"], {
+#     "db2": "final",
+#     "no_db2": "final"
+# })
+
+# workflow.add_edge("final", END)
+
+# graph = workflow.compile()
+
+
+# # =============================================
+# # 🎨 Streamlit UI
+# # =============================================
+# st.set_page_config(page_title="Hybrid RAG Chatbot", layout="wide")
+# st.title("🤖 Hybrid RAG Chatbot — v1")
+# st.write("DB1 → DB2 → Gemini")
+
+# query = st.text_input("Ask your question:")
+
+# if st.button("Search"):
+#     if not query.strip():
+#         st.warning("Please enter a question.")
+#         st.stop()
+
+#     with st.spinner("Thinking..."):
+#         result = graph.invoke({
+#             "query": query,
+#             "context": "",
+#             "answer": ""
+#         })
+
+#     st.subheader("Response")
+#     st.write(result["answer"])
+
+#     st.caption(f"Source: **{result['context']}**")
 
 
 
