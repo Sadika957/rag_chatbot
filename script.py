@@ -145,23 +145,52 @@ def db2_node(state: GraphState):
     return {**state, "answer": ans, "context": "db2"}
 
 
+# def google_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     try:
+#         snippet = requests.get(
+#             f"https://www.googleapis.com/customsearch/v1?q={quote(q)}&key={GOOGLE_API_KEY}",
+#             timeout=8,
+#         ).json()
+
+#         text = snippet.get("items", [{}])[0].get("snippet", "")
+#         if not text:
+#             return {**state, "context": "no_google"}
+
+#         ans = gemini_answer(f"Answer concisely using Google results:\n{text}")
+#         return {**state, "answer": ans, "context": "google"}
+
+#     except:
+#         return {**state, "context": "no_google"}
+
 def google_node(state: GraphState):
     q = clean_query(state["query"])
     try:
-        snippet = requests.get(
-            f"https://www.googleapis.com/customsearch/v1?q={quote(q)}&key={GOOGLE_API_KEY}",
-            timeout=8,
-        ).json()
+        snippet = google_tool.run(q)
 
-        text = snippet.get("items", [{}])[0].get("snippet", "")
-        if not text:
+        # Some APIs return [] or {} = treat as no results
+        if not snippet or len(str(snippet).strip()) < 10:
             return {**state, "context": "no_google"}
 
-        ans = gemini_answer(f"Answer concisely using Google results:\n{text}")
-        return {**state, "answer": ans, "context": "google"}
+        # Proper Gemini answer
+        resp = gemini.generate_content(
+            f"Answer using these Google search results:\n{snippet}"
+        )
+        ans = resp.text.strip()
 
-    except:
+        return {
+            **state,
+            "answer": ans,
+            "context": "google",
+            "citations": [
+                f"https://www.google.com/search?q={quote(q)}"
+            ]
+        }
+
+    except Exception as e:
+        print("Google error:", e)
         return {**state, "context": "no_google"}
+
 
 
 def wiki_node(state: GraphState):
