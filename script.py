@@ -477,7 +477,7 @@ graph = workflow.compile()
 # ============================================================
 
 st.set_page_config(page_title="Hybrid RAG Chatbot", layout="wide")
-st.title("🤖 Hybrid RAG Chatbot — DB1 + DB2 + Google + Wiki")
+st.title("🤖 Hybrid RAG Chatbot")
 
 
 # Initialize conversation
