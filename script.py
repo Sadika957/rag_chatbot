@@ -1,7 +1,3 @@
-# ============================================================
-# 🌟 STREAMLIT RAG CHATBOT — DB1 + DB2 + GEMINI FLASH
-# ============================================================
-
 import streamlit as st
 import os
 import json
@@ -13,10 +9,9 @@ from typing import TypedDict, List, Dict, Any
 from langgraph.graph import StateGraph, START, END
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain_community.utilities import WikipediaAPIWrapper #, GoogleSearchAPIWrapper
-from langchain_community.tools import WikipediaQueryRun #, GoogleSearchRun
+from langchain_community.utilities import WikipediaAPIWrapper
+from langchain_community.tools import WikipediaQueryRun
 from langchain_community.utilities import SerpAPIWrapper
-
 
 # Google Gemini SDK
 import google.generativeai as genai
@@ -28,13 +23,17 @@ import google.generativeai as genai
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
+SERPAPI_KEY = os.getenv("SERPAPI_API_KEY")
 
 if not GOOGLE_API_KEY:
     st.error("Missing GOOGLE_API_KEY environment variable!")
     st.stop()
 
-genai.configure(api_key=GOOGLE_API_KEY)
+if not SERPAPI_KEY:
+    st.error("Missing SERPAPI_API_KEY environment variable!")
+    st.stop()
 
+genai.configure(api_key=GOOGLE_API_KEY)
 gemini = genai.GenerativeModel("gemini-2.5-flash")
 
 
@@ -83,6 +82,35 @@ def gemini_answer(prompt: str) -> str:
         return f"(Gemini error: {e})"
 
 
+# ============================================================
+# 👋 GREETING DETECTION
+# ============================================================
+
+GREETINGS = {
+    "hi", "hello", "hey", "hey!", "hi!", "hello!", "hey there",
+    "good morning", "good afternoon", "good evening", "greetings",
+    "howdy"
+}
+
+def is_greeting(text: str) -> bool:
+    text = text.lower().strip()
+    return any(text == g or text.startswith(g) for g in GREETINGS)
+
+def greeting_response(text: str) -> str:
+    t = text.lower()
+    if "morning" in t:
+        return "Good morning! 😊"
+    if "afternoon" in t:
+        return "Good afternoon! ☀️"
+    if "evening" in t:
+        return "Good evening! 🌙"
+    return "Hello! 👋 How can I help you today?"
+
+
+# ============================================================
+# EXTRACTIVE QA
+# ============================================================
+
 def extractive_answer(query: str, docs: List[Any]) -> str:
     """Extractive QA: answer ONLY from context."""
     context_text = "\n\n".join(
@@ -117,29 +145,16 @@ class GraphState(TypedDict):
     answer: str
     context: str
 
-# =====================================================
+
+# ============================================================
 # 🌐 External Search Tools
-# =====================================================
+# ============================================================
+
 wiki_tool = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
-
-# google_tool = GoogleSearchRun(
-#     api_wrapper=GoogleSearchAPIWrapper(
-#         google_api_key=GOOGLE_API_KEY,
-#         google_cse_id=GOOGLE_CSE_ID
-#     )
-# )
-
-
-# google_tool = SerpAPIWrapper(api_key=os.getenv("SERPAPI_KEY"))
-
-
-# google_tool = SerpAPIWrapper(serpapi_api_key=os.getenv("SERPAPI_API_KEY"))
 
 google_tool = SerpAPIWrapper(
     serpapi_api_key=os.getenv("SERPAPI_API_KEY")
 )
-
-
 
 
 # ============================================================
@@ -174,62 +189,11 @@ def db2_node(state: GraphState):
     return {**state, "answer": ans, "context": "db2"}
 
 
-# def google_node(state: GraphState):
-#     q = clean_query(state["query"])
-#     try:
-#         snippet = requests.get(
-#             f"https://www.googleapis.com/customsearch/v1?q={quote(q)}&key={GOOGLE_API_KEY}",
-#             timeout=8,
-#         ).json()
-
-#         text = snippet.get("items", [{}])[0].get("snippet", "")
-#         if not text:
-#             return {**state, "context": "no_google"}
-
-#         ans = gemini_answer(f"Answer concisely using Google results:\n{text}")
-#         return {**state, "answer": ans, "context": "google"}
-
-#     except:
-#         return {**state, "context": "no_google"}
-
-# def google_node(state: GraphState):
-#     q = clean_query(state["query"])
-#     try:
-#         snippet = google_tool.run(q)
-
-#         # Some APIs return [] or {} = treat as no results
-#         if not snippet or len(str(snippet).strip()) < 10:
-#             return {**state, "context": "no_google"}
-
-#         # Proper Gemini answer
-#         resp = gemini.generate_content(
-#             f"Answer using these Google search results:\n{snippet}"
-#         )
-#         ans = resp.text.strip()
-
-#         return {
-#             **state,
-#             "answer": ans,
-#             "context": "google",
-#             "citations": [
-#                 f"https://www.google.com/search?q={quote(q)}"
-#             ]
-#         }
-
-#     except Exception as e:
-#         print("Google error:", e)
-#         return {**state, "context": "no_google"}
-
-
-
-
-# Google Node using SERP API
 def google_node(state: GraphState):
     q = clean_query(state["query"])
 
     try:
         results = google_tool.run(q)
-
         if not results:
             return {**state, "context": "no_google"}
 
@@ -250,9 +214,9 @@ def google_node(state: GraphState):
         return {**state, "context": "no_google"}
 
 
-
 def wiki_node(state: GraphState):
     q = clean_query(state["query"])
+
     try:
         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(q)}"
         blob = requests.get(url, timeout=8).json().get("extract", "")
@@ -335,7 +299,7 @@ for msg in st.session_state["messages"]:
         st.write(msg["content"])
 
 
-# User input box
+# User input
 user_query = st.chat_input("Ask something...")
 
 if user_query:
@@ -344,7 +308,18 @@ if user_query:
     with st.chat_message("user"):
         st.write(user_query)
 
-    # Run RAG pipeline
+    # 👉 1. FIRST HANDLE GREETINGS
+    if is_greeting(user_query):
+        reply = greeting_response(user_query)
+
+        with st.chat_message("assistant"):
+            st.write(reply)
+            st.caption("Source: greeting")
+
+        st.session_state["messages"].append({"role": "assistant", "content": reply})
+        st.stop()
+
+    # 👉 2. RUN HYBRID RAG PIPELINE
     result = graph.invoke({
         "query": user_query,
         "context": "",
@@ -359,6 +334,385 @@ if user_query:
         st.caption(f"Source: {context}")
 
     st.session_state["messages"].append({"role": "assistant", "content": answer})
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ### WORKING CODE:
+
+# # ============================================================
+# # 🌟 STREAMLIT RAG CHATBOT — DB1 + DB2 + GEMINI FLASH
+# # ============================================================
+
+# import streamlit as st
+# import os
+# import json
+# import re
+# import requests
+# from urllib.parse import quote
+# from typing import TypedDict, List, Dict, Any
+
+# from langgraph.graph import StateGraph, START, END
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+# from langchain_community.vectorstores import Chroma
+# from langchain_community.utilities import WikipediaAPIWrapper #, GoogleSearchAPIWrapper
+# from langchain_community.tools import WikipediaQueryRun #, GoogleSearchRun
+# from langchain_community.utilities import SerpAPIWrapper
+
+
+# # Google Gemini SDK
+# import google.generativeai as genai
+
+
+# # ============================================================
+# # 🔐 ENVIRONMENT VARIABLES
+# # ============================================================
+
+# GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+# GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
+
+# if not GOOGLE_API_KEY:
+#     st.error("Missing GOOGLE_API_KEY environment variable!")
+#     st.stop()
+
+# genai.configure(api_key=GOOGLE_API_KEY)
+
+# gemini = genai.GenerativeModel("gemini-2.5-flash")
+
+
+# # ============================================================
+# # 📁 DIRECTORIES
+# # ============================================================
+
+# BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# DB1_PATH = os.path.join(BASE_DIR, "small_db_using_HF_baai_bge")
+# DB2_PATH = os.path.join(BASE_DIR, "large_embeddings_baai_bge")
+
+
+# # ============================================================
+# # 🧠 EMBEDDINGS (HF BGE-SMALL)
+# # ============================================================
+
+# EMBED_MODEL = "BAAI/bge-small-en-v1.5"
+# embeddings = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
+
+
+# # ============================================================
+# # 📚 LOAD VECTOR DBs
+# # ============================================================
+
+# db1 = Chroma(persist_directory=DB1_PATH, embedding_function=embeddings)
+# retriever1 = db1.as_retriever(search_kwargs={"k": 6})
+
+# db2 = Chroma(persist_directory=DB2_PATH, embedding_function=embeddings)
+# retriever2 = db2.as_retriever(search_kwargs={"k": 6})
+
+
+# # ============================================================
+# # 🧹 UTILITY FUNCTIONS
+# # ============================================================
+
+# def clean_query(q: str) -> str:
+#     return re.sub(r"\s+", " ", q.strip())
+
+
+# def gemini_answer(prompt: str) -> str:
+#     """Generate text from Gemini with correct API."""
+#     try:
+#         resp = gemini.generate_content(prompt)
+#         return resp.text.strip() if resp.text else ""
+#     except Exception as e:
+#         return f"(Gemini error: {e})"
+
+
+# def extractive_answer(query: str, docs: List[Any]) -> str:
+#     """Extractive QA: answer ONLY from context."""
+#     context_text = "\n\n".join(
+#         f"[{i+1}] {d.page_content}" for i, d in enumerate(docs[:5])
+#     )
+
+#     prompt = f"""
+# Answer the question ONLY using the provided CONTEXT.
+# Cite sources using [1], [2], etc.
+# If answer not found, return "NOINFO".
+
+# Question: {query}
+
+# CONTEXT:
+# {context_text}
+# """
+
+#     ans = gemini_answer(prompt)
+
+#     if ans.upper().startswith("NOINFO") or len(ans) < 20:
+#         return ""
+
+#     return ans
+
+
+# # ============================================================
+# # 📚 GRAPH STATE
+# # ============================================================
+
+# class GraphState(TypedDict):
+#     query: str
+#     answer: str
+#     context: str
+
+# # =====================================================
+# # 🌐 External Search Tools
+# # =====================================================
+# wiki_tool = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
+
+# # google_tool = GoogleSearchRun(
+# #     api_wrapper=GoogleSearchAPIWrapper(
+# #         google_api_key=GOOGLE_API_KEY,
+# #         google_cse_id=GOOGLE_CSE_ID
+# #     )
+# # )
+
+
+# # google_tool = SerpAPIWrapper(api_key=os.getenv("SERPAPI_KEY"))
+
+
+# # google_tool = SerpAPIWrapper(serpapi_api_key=os.getenv("SERPAPI_API_KEY"))
+
+# google_tool = SerpAPIWrapper(
+#     serpapi_api_key=os.getenv("SERPAPI_API_KEY")
+# )
+
+
+
+
+# # ============================================================
+# # 🧱 GRAPH NODES
+# # ============================================================
+
+# def db1_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     docs = retriever1.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db1"}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db1"}
+
+#     return {**state, "answer": ans, "context": "db1"}
+
+
+# def db2_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     docs = retriever2.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db2"}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db2"}
+
+#     return {**state, "answer": ans, "context": "db2"}
+
+
+# # def google_node(state: GraphState):
+# #     q = clean_query(state["query"])
+# #     try:
+# #         snippet = requests.get(
+# #             f"https://www.googleapis.com/customsearch/v1?q={quote(q)}&key={GOOGLE_API_KEY}",
+# #             timeout=8,
+# #         ).json()
+
+# #         text = snippet.get("items", [{}])[0].get("snippet", "")
+# #         if not text:
+# #             return {**state, "context": "no_google"}
+
+# #         ans = gemini_answer(f"Answer concisely using Google results:\n{text}")
+# #         return {**state, "answer": ans, "context": "google"}
+
+# #     except:
+# #         return {**state, "context": "no_google"}
+
+# # def google_node(state: GraphState):
+# #     q = clean_query(state["query"])
+# #     try:
+# #         snippet = google_tool.run(q)
+
+# #         # Some APIs return [] or {} = treat as no results
+# #         if not snippet or len(str(snippet).strip()) < 10:
+# #             return {**state, "context": "no_google"}
+
+# #         # Proper Gemini answer
+# #         resp = gemini.generate_content(
+# #             f"Answer using these Google search results:\n{snippet}"
+# #         )
+# #         ans = resp.text.strip()
+
+# #         return {
+# #             **state,
+# #             "answer": ans,
+# #             "context": "google",
+# #             "citations": [
+# #                 f"https://www.google.com/search?q={quote(q)}"
+# #             ]
+# #         }
+
+# #     except Exception as e:
+# #         print("Google error:", e)
+# #         return {**state, "context": "no_google"}
+
+
+
+
+# # Google Node using SERP API
+# def google_node(state: GraphState):
+#     q = clean_query(state["query"])
+
+#     try:
+#         results = google_tool.run(q)
+
+#         if not results:
+#             return {**state, "context": "no_google"}
+
+#         prompt = f"Answer concisely using these Google search results:\n{results}"
+#         ans = gemini.generate_content(prompt).text.strip()
+
+#         refs = [f"https://www.google.com/search?q={quote(q)}"]
+
+#         return {
+#             **state,
+#             "answer": ans,
+#             "context": "google",
+#             "citations": refs
+#         }
+
+#     except Exception as e:
+#         print("Google error:", e)
+#         return {**state, "context": "no_google"}
+
+
+
+# def wiki_node(state: GraphState):
+#     q = clean_query(state["query"])
+#     try:
+#         url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(q)}"
+#         blob = requests.get(url, timeout=8).json().get("extract", "")
+
+#         if not blob:
+#             return {**state, "context": "no_wiki"}
+
+#         ans = gemini_answer(f"Answer using this Wikipedia extract:\n{blob}")
+#         return {**state, "answer": ans, "context": "wiki"}
+
+#     except:
+#         return {**state, "context": "no_wiki"}
+
+
+# def final_node(state: GraphState):
+#     """Final cleanup summary."""
+#     q = clean_query(state["query"])
+#     base_ans = state["answer"]
+
+#     prompt = f"""
+# Rewrite the following answer more clearly and concisely.
+
+# Question: {q}
+# Answer: {base_ans}
+# """
+
+#     summary = gemini_answer(prompt)
+#     return {**state, "answer": summary}
+
+
+# # ============================================================
+# # 🔀 GRAPH PIPELINE
+# # ============================================================
+
+# workflow = StateGraph(GraphState)
+
+# workflow.add_node("db1", db1_node)
+# workflow.add_node("db2", db2_node)
+# workflow.add_node("google", google_node)
+# workflow.add_node("wiki", wiki_node)
+# workflow.add_node("final", final_node)
+
+# workflow.add_edge(START, "db1")
+
+# workflow.add_conditional_edges("db1", lambda s: s["context"], {
+#     "db1": "final",
+#     "no_db1": "db2"
+# })
+# workflow.add_conditional_edges("db2", lambda s: s["context"], {
+#     "db2": "final",
+#     "no_db2": "google"
+# })
+# workflow.add_conditional_edges("google", lambda s: s["context"], {
+#     "google": "final",
+#     "no_google": "wiki"
+# })
+
+# workflow.add_edge("wiki", "final")
+# workflow.add_edge("final", END)
+
+# graph = workflow.compile()
+
+
+# # ============================================================
+# # 🎨 STREAMLIT UI
+# # ============================================================
+
+# st.set_page_config(page_title="Hybrid RAG Chatbot", layout="wide")
+# st.title("🤖 Hybrid RAG Chatbot — DB1 + DB2 + Google + Wiki")
+
+
+# # Initialize conversation
+# if "messages" not in st.session_state:
+#     st.session_state["messages"] = []
+
+
+# # Display conversation
+# for msg in st.session_state["messages"]:
+#     with st.chat_message(msg["role"]):
+#         st.write(msg["content"])
+
+
+# # User input box
+# user_query = st.chat_input("Ask something...")
+
+# if user_query:
+#     st.session_state["messages"].append({"role": "user", "content": user_query})
+
+#     with st.chat_message("user"):
+#         st.write(user_query)
+
+#     # Run RAG pipeline
+#     result = graph.invoke({
+#         "query": user_query,
+#         "context": "",
+#         "answer": ""
+#     })
+
+#     answer = result["answer"]
+#     context = result["context"]
+
+#     with st.chat_message("assistant"):
+#         st.write(answer)
+#         st.caption(f"Source: {context}")
+
+#     st.session_state["messages"].append({"role": "assistant", "content": answer})
 
 
 
