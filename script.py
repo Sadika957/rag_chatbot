@@ -23,6 +23,7 @@ import google.generativeai as genai
 # ============================================================
 
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_CSE_ID = os.getenv("GOOGLE_CSE_ID")
 
 if not GOOGLE_API_KEY:
     st.error("Missing GOOGLE_API_KEY environment variable!")
@@ -111,6 +112,18 @@ class GraphState(TypedDict):
     query: str
     answer: str
     context: str
+
+# =====================================================
+# 🌐 External Search Tools
+# =====================================================
+wiki_tool = WikipediaQueryRun(api_wrapper=WikipediaAPIWrapper())
+
+google_tool = GoogleSearchRun(
+    api_wrapper=GoogleSearchAPIWrapper(
+        google_api_key=GOOGLE_API_KEY,
+        google_cse_id=GOOGLE_CSE_ID
+    )
+)
 
 
 # ============================================================
