@@ -231,13 +231,33 @@ def wiki_node(state: GraphState):
         return {**state, "context": "no_wiki"}
 
 
+# def final_node(state: GraphState):
+#     """Final cleanup summary."""
+#     q = clean_query(state["query"])
+#     base_ans = state["answer"]
+
+#     prompt = f"""
+# Rewrite the following answer more clearly and concisely.
+
+# Question: {q}
+# Answer: {base_ans}
+# """
+
+#     summary = gemini_answer(prompt)
+#     return {**state, "answer": summary}
+
+
+
 def final_node(state: GraphState):
-    """Final cleanup summary."""
+    """Final cleanup summary — produce ONE best direct answer."""
     q = clean_query(state["query"])
     base_ans = state["answer"]
 
     prompt = f"""
-Rewrite the following answer more clearly and concisely.
+Rewrite the following answer into ONE single, clear, direct answer.
+Do NOT give multiple options. 
+Do NOT give choices, lists, or variations. 
+Give only the best final answer in 2–4 sentences max.
 
 Question: {q}
 Answer: {base_ans}
@@ -245,6 +265,7 @@ Answer: {base_ans}
 
     summary = gemini_answer(prompt)
     return {**state, "answer": summary}
+
 
 
 # ============================================================
