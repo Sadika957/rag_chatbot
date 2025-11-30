@@ -43,8 +43,8 @@ embeddings = HuggingFaceEmbeddings(
 # =============================================
 # 📚 Vector DBs
 # =============================================
-DB1_PATH = "/mount/src/rag_chatbot/vector_db/db1"
-DB2_PATH = "/mount/src/rag_chatbot/vector_db/db2"
+DB1_PATH = os.path.join(BASE_DIR, "small_db_using_HF_baai_bge")
+DB2_PATH = os.path.join(BASE_DIR, "large_embeddings_baai_bge")
 
 db1 = Chroma(persist_directory=DB1_PATH, embedding_function=embeddings)
 db2 = Chroma(persist_directory=DB2_PATH, embedding_function=embeddings)
