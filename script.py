@@ -264,8 +264,25 @@ google_tool = SerpAPIWrapper(
 # 🧱 GRAPH NODES
 # ============================================================
 
+# def db1_node(state: GraphState) -> GraphState:
+#     """First local DB (FAQ-style) → citation = Google search link."""
+#     q = clean_query(state["query"])
+#     docs = retriever1.invoke(q)
+
+#     if not docs:
+#         return {**state, "context": "no_db1", "citations": []}
+
+#     ans = extractive_answer(q, docs)
+#     if not ans:
+#         return {**state, "context": "no_db1", "citations": []}
+
+#     # DB1 → simple Google search citation
+#     refs = [f"[Google Search](https://www.google.com/search?q={quote(q)})"]
+
+#     return {**state, "answer": ans, "context": "db1", "citations": refs}
+
 def db1_node(state: GraphState) -> GraphState:
-    """First local DB (FAQ-style) → citation = Google search link."""
+    """First local DB (FAQ-style) → NO citations."""
     q = clean_query(state["query"])
     docs = retriever1.invoke(q)
 
@@ -276,8 +293,8 @@ def db1_node(state: GraphState) -> GraphState:
     if not ans:
         return {**state, "context": "no_db1", "citations": []}
 
-    # DB1 → simple Google search citation
-    refs = [f"[Google Search](https://www.google.com/search?q={quote(q)})"]
+    # ❗ DB1 → NO citations
+    refs = []
 
     return {**state, "answer": ans, "context": "db1", "citations": refs}
 
