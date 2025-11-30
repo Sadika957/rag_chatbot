@@ -4,9 +4,10 @@ import re
 from typing import TypedDict, List, Any
 from langgraph.graph import StateGraph, START, END
 
-from langchain_google_genai import ChatGoogleGenerativeAI
+# from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_chroma import Chroma
+from google.generativeai import configure, GenerativeModel
 
 
 # =============================================
@@ -19,14 +20,21 @@ if not GOOGLE_API_KEY:
     st.stop()
 
 
-# =============================================
-# 🤖 Gemini LLM
-# =============================================
-gemini = ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
-    api_key=GOOGLE_API_KEY,
-    temperature=0
-)
+# # =============================================
+# # 🤖 Gemini LLM
+# # =============================================
+# gemini = ChatGoogleGenerativeAI(
+#     model="gemini-2.5-flash",
+#     api_key=GOOGLE_API_KEY,
+#     temperature=0
+# )
+
+
+# =====================================================
+# 🤖 GEMINI LLM
+# =====================================================
+configure(api_key=GOOGLE_API_KEY)
+gemini = GenerativeModel("gemini-2.5-flash")
 
 
 # =============================================
